@@ -1,0 +1,271 @@
+manifest:
+  version: "0.1.3"
+  schema: https://a2as.org/cert/schema
+  subject:
+    name: karthick-sothivelr/autonomous_supply_chain_intelligence
+    source: https://github.com/karthick-sothivelr/autonomous_supply_chain_intelligence
+    branch: main
+    commit: "8c9da95b"
+    scope: [main.py, memory_utils.py, veganflow_ai/agents/inventory.py, veganflow_ai/agents/orchestrator.py, veganflow_ai/agents/procurement.py,
+      veganflow_ai/external_vendor/vendor_agent.py]
+  issued:
+    by: A2AS.org
+    at: '2026-02-11T16:45:41Z'
+    url: https://a2as.org/certified/agents/karthick-sothivelr/autonomous_supply_chain_intelligence
+  signatures:
+    digest: sha256:QXX8PP1yKqAQNMCwwy718iAye9bpBAR9ZKzafNUkpfs
+    key: ed25519:yGeZHSQghoD3lk8_ietpo3gWdQErDfbBBroH4j9Hy2k
+    sig: ed25519:HBX6Pv-RJeGOk8LTbx2B6q5VyfEbROIw2tHlmDgpWoKpxWt2JYicGuGW3Tv3he7mu5XT6bOirTDMfVy4aOG7BQ
+
+agents:
+  agent.0:
+    type: instance
+    models: [gemini-2.0-flash-lite]
+    tools: [check_quote]
+    params:
+      name: safe_name
+      description: Automated Sales Agent for {name}
+      instruction: ['You are the Sales Representative for {name}.', 'Your Reliability Score is {reliability}.', Your goal
+          is to sell products but maintain margins., You MUST use the 'check_quote' tool to validate every offer., Do not
+          hallucinate an acceptance if the tool returns REJECTED., Be concise and transactional.]
+      function: create_vendor_agent
+      instance: agent
+  agent.1:
+    type: instance
+    models: [gemini-2.0-flash]
+    tools: [query_inventory]
+    params:
+      name: shelf_monitor
+      instruction: [You are the 'Shelf Monitor' for VeganFlow., Your job is to query the SQL database using your tools and
+          report risks., 'TOOLS:', '- query_inventory(query_type, product_name): Use this to check the DB. Use ''LOW_STOCK''
+          or ''EXPIRING_SOON''', for general risk checks. Use 'PRODUCT_DETAIL' if asked for specifics on one item before negotiating.,
+        'LOGIC:', '1. If asked about "risks", "status", or "inventory", run BOTH ''LOW_STOCK'' and ''EXPIRING_SOON'' checks.',
+        '2. If asked about a single item''s purchase options, use ''PRODUCT_DETAIL''.', 3. Be precise.]
+      function: create_shelf_monitor
+      instance: agent
+  agent.2:
+    type: instance
+    models: [gemini-2.5-pro]
+    tools: [get_vendor_options, negotiate_with_vendor, load_memory]
+    params:
+      name: procurement_negotiator
+      instruction: [You are the Senior Buyer for VeganFlow., 'GOAL: Secure inventory at the lowest cost.', 'STRATEGY:', '1.
+          OBSERVATION: Call ''get_vendor_options'' to see the market sorted by price.', '2. REASONING: Call ''load_memory''
+          to check our historical target price.', '3. PLANNING:', '- Start with the cheapest vendor.', '- Offer 10% below
+          their list price.', '4. EXECUTION: Call ''negotiate_with_vendor''.', '5. ADAPTATION (CRITICAL):', '- IF Accepted:
+          Stop.', '- IF Rejected with a Counter-Offer:', '- COMPARE the Counter-Offer to the List Price of the NEXT vendor.',
+        '- IF Counter-Offer < Next Vendor''s Price -> ACCEPT the Counter-Offer (Call negotiate again with that price).', '-
+          IF Counter-Offer > Next Vendor''s Price -> Move to the NEXT vendor.', '- Do not stop until you have a deal or run
+          out of vendors.']
+      function: create_procurement_agent
+      instance: agent
+  orchestrator:
+    type: instance
+    models: [gemini-2.5-pro]
+    params:
+      name: store_manager
+      instruction: ['You are the Store Manager for ''VeganFlow'', a high-tech sustainable retail store.', 'Your goal is to
+          optimize inventory costs, prevent waste, and ensure affordability.', You manage a team of specialized agents. DO
+          NOT attempt to solve tasks yourself., 'DELEGATE immediately based on the user''s request:', '--- YOUR TEAM ---',
+        '1. shelf_monitor (Inventory Agent):', '- The "Eyes" of the store.', '- Use this for ANY questions about stock levels,
+          sales velocity, or expiry dates.', '- Example: "Do we have enough Oat Milk?" or "What is expiring soon?"', '2. procurement_negotiator
+          (Procurement Agent):', '- The "Hands" of the store.', '- Use this ONLY when you need to buy stock, contact vendors,
+          or check market prices.', '- Example: "Restock the Cashew Cheese" or "Negotiate a better price."', '--- YOUR PROCESS
+          ---', 1. Analyze the user's request., '2. If the user asks to "Analyze Risks", call ''shelf_monitor'' first.', '3.
+          If the ''shelf_monitor'' finds a problem (e.g., Low Stock), AUTOMATICALLY delegate', to 'procurement_negotiator'
+          to solve it., 4. Summarize the final result (Cost Saved / Deal Status) for the store owner clearly.]
+      after_agent_callback: auto_save_memory
+      function: create_store_manager
+      sub_agents: [inventory_agent, procurement_agent]
+  seeder_agent.0:
+    type: instance
+    models: [gemini-2.0-flash]
+    params:
+      name: memory_seeder
+      instruction: [You are a scribe.]
+      function: test_negotiation
+      instance: seeder_agent
+  seeder_agent.1:
+    type: instance
+    models: [gemini-2.0-flash-lite]
+    params:
+      name: memory_seeder
+      instruction: [You are a passive scribe. Acknowledge the user's input with 'Saved.']
+      function: seed_memory
+      instance: seeder_agent
+
+models:
+  gemini-2.0-flash:
+    type: literal
+    agents: [agent.1, seeder_agent.0]
+  gemini-2.0-flash-lite:
+    type: function
+    agents: [seeder_agent.1, agent.0]
+    params:
+      wrapper: Gemini
+      model: gemini-2.0-flash-lite
+  gemini-2.5-pro:
+    type: literal
+    agents: [agent.2, orchestrator]
+
+tools:
+  check_quote:
+    type: function
+    agents: [agent.0]
+    params:
+      description: Evaluates an incoming purchase offer using a realistic price catalog.
+  get_vendor_options:
+    type: function
+    agents: [agent.2]
+    params:
+      description: |-
+        Queries the internal database to find ALL vendors selling a specific product.
+        Returns them SORTED by price (Cheapest First).
+  load_memory:
+    type: function
+    agents: [agent.2]
+  negotiate_with_vendor:
+    type: function
+    agents: [agent.2]
+    params:
+      description: Dynamically connects to a Remote Vendor Agent via A2A to place an order.
+  query_inventory:
+    type: function
+    agents: [agent.1]
+    params:
+      description: "Directly queries the 'VeganFlow' POS database to check inventory health.\n\nArgs:\n    query_type: One\
+        \ of 'LOW_STOCK', 'EXPIRING_SOON', 'ALL', or 'PRODUCT_DETAIL'.\n    product_name: The name of the product (required\
+        \ for 'PRODUCT_DETAIL').\n    \nReturns:\n    A text report of items matching the criteria."
+
+teams:
+  store_manager:
+    type: hierarchy
+    agents: [store_manager, inventory_agent, procurement_agent]
+
+imports:
+  agent: agent
+  argparse: argparse
+  asyncio: asyncio
+  create_procurement_agent: procurement.create_procurement_agent
+  create_shelf_monitor: inventory.create_shelf_monitor
+  create_store_manager: agents.orchestrator.create_store_manager
+  create_vendor_agent: veganflow_ai.external_vendor.vendor_agent.create_vendor_agent
+  FastAPI: fastapi.FastAPI
+  Gemini: google.adk.models.google_llm.Gemini
+  initialize_memory: memory_utils.initialize_memory
+  InMemoryMemoryService: google.adk.memory.InMemoryMemoryService
+  InMemorySessionService: google.adk.sessions.InMemorySessionService
+  LlmAgent: google.adk.agents.LlmAgent
+  load_dotenv: dotenv.load_dotenv
+  load_memory: google.adk.tools.load_memory
+  logging: logging
+  LoggingPlugin: google.adk.plugins.logging_plugin.LoggingPlugin
+  os: os
+  PlanReActPlanner: google.adk.planners.PlanReActPlanner
+  re: re
+  RemoteA2aAgent: google.adk.agents.remote_a2a_agent.RemoteA2aAgent
+  Runner: google.adk.runners.Runner
+  setup_retail_database: tools.retail_database_setup.setup_retail_database
+  sqlite3: sqlite3
+  sys: sys
+  to_a2a: google.adk.a2a.utils.agent_to_a2a.to_a2a
+  types: google.genai.types
+  uvicorn: uvicorn
+
+functions:
+  __init__:
+    type: sync
+    module: memory_utils
+    args: [self]
+  auto_save_memory:
+    type: async
+    module: veganflow_ai.agents.orchestrator
+    args: [callback_context]
+  check_quote:
+    type: sync
+    module: veganflow_ai.external_vendor.vendor_agent
+    args: [product_name, quantity, offer_price]
+    params:
+      returns: str
+  create_procurement_agent:
+    type: sync
+    module: veganflow_ai.agents.procurement
+  create_shelf_monitor:
+    type: sync
+    module: veganflow_ai.agents.inventory
+  create_store_manager:
+    type: sync
+    module: veganflow_ai.agents.orchestrator
+  create_vendor_agent:
+    type: sync
+    module: veganflow_ai.external_vendor.vendor_agent
+    args: [name, reliability, port]
+  get_vendor_options:
+    type: sync
+    module: veganflow_ai.agents.procurement
+    args: [product_name]
+    params:
+      returns: str
+  health_check:
+    type: sync
+    module: veganflow_ai.external_vendor.vendor_hub
+  initialize_memory:
+    type: async
+    module: memory_utils
+  main:
+    type: async
+    module: main
+  negotiate_with_vendor:
+    type: async
+    module: veganflow_ai.agents.procurement
+    args: [vendor_endpoint, product, offer_price, quantity]
+    params:
+      returns: str
+  query_inventory:
+    type: sync
+    module: veganflow_ai.agents.inventory
+    args: [query_type, product_name]
+    params:
+      returns: str
+  seed_memory:
+    type: async
+    module: memory_utils
+    args: [self]
+  test_locally:
+    type: async
+    module: veganflow_ai.agents.inventory
+  test_negotiation:
+    type: async
+    module: veganflow_ai.agents.procurement
+
+variables:
+  AGENT_ENGINE_ID:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [memory_utils]
+  ENABLE_TRACING:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [main]
+  GOOGLE_CLOUD_LOCATION:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [memory_utils]
+  GOOGLE_CLOUD_PROJECT:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [memory_utils]
+  PORT:
+    type: env
+    params:
+      caller: [os.environ.get]
+      path: [veganflow_ai.external_vendor.vendor_hub]
+  USER_ID:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [main]
